@@ -6,14 +6,71 @@
 
 ## Lancer MLFlow
 
+Le notebook est configure pour utiliser un serveur MLflow local (`http://127.0.0.1:5000`).
+Pour voir vos runs et creer l'experiment, demarrez le serveur avec le meme backend :
+
 ```shell
-mlflow server
+mlflow server \
+  --host 127.0.0.1 \
+  --port 5000 \
+  --backend-store-uri "file:${PWD}/mlruns" \
+  --default-artifact-root "file:${PWD}/mlruns"
 ```
+
+Si vous preferez seulement l'interface (sans API), vous pouvez lancer :
+
+```shell
+mlflow ui --backend-store-uri "file:${PWD}/mlruns" --port 5000
+```
+
+Pour tester le serving du modele en staging :
 
 ```shell
 mlflow models serve -m "models:/credit_scoring_model/Staging" -p 5001 --no-conda
 ```
 
-```shell
-mlflow ui --backend-store-uri "file:${PWD}/mlruns" --port 5000
-```
+## Rapport de conformite Mission 1 (Notebook)
+
+Ce rapport decrit l'etat du notebook `P6_MANET_Stephane_notebook_modélisation.ipynb`
+au regard de `ressources/mission_1.md` et `ressources/correction_1.md`.
+Il est volontairement pedagogue pour un lecteur debutant.
+
+### Ce qui est conforme (livrables couverts)
+
+- **Preparation + pipeline** : nettoyage / preparation, encodage, imputation et pipeline d'entrainement presentes.
+- **Gestion du desequilibre** : un sous-echantillonnage est applique sur le jeu d'entrainement final.
+- **Comparaison multi-modeles** : baseline, Naive Bayes, Logistic Regression, Decision Tree, Random Forest,
+  HistGradientBoosting, LGBM, XGB sont compares.
+- **Validation croisee + tuning** : `StratifiedKFold`, `GridSearchCV` et Hyperopt sont utilises.
+- **Score metier + seuil optimal** : le `custom_score` est la metrique principale des tableaux de comparaison
+  et de la CV, avec un `best_threshold` calcule.
+- **Explicabilite** : feature importance, SHAP et LIME sont inclus.
+- **MLOps (MLflow)** : tracking des params / metriques (dont `custom_score` et `best_threshold`), tags,
+  registry et passage en "Staging".
+
+### Ce qui est partiellement couvert
+
+- **Choix du meilleur modele** : le registre MLflow choisit le meilleur run par `custom_score`,
+  mais la narration "Best Final Model = HGB" n'est pas toujours alignee avec ce critere.
+- **UI/serving MLflow** : les instructions sont ecrites mais pas de preuve d'execution (screenshot / test).
+
+### Ce qui reste a faire (pour un livrable complet)
+
+- Aligner le modele "final" choisi dans le notebook avec le meilleur run MLflow.
+- Produire un screenshot de l'interface MLflow et un test de serving.
+
+### Nettoyage effectue
+
+- **Erreur d'execution** supprimee des outputs.
+- **Bloc ngrok / token** retire.
+- **Notes de travail** (TODO) retirees.
+- **Cellules de test isolees** supprimees.
+- **Imports non utilises** supprimes.
+
+### Glossaire rapide (pour debutant)
+
+- **custom_score** : metrique metier qui penalise plus fortement les faux negatifs que les faux positifs.
+- **Seuil optimal** : probabilite qui sert a transformer un score en classe 0/1.
+- **Validation croisee (CV)** : evaluation sur plusieurs sous-echantillons pour eviter un resultat "chanceux".
+- **MLflow tracking** : historique des runs, parametres et metriques.
+- **Registry** : espace MLflow pour versionner et promouvoir un modele (ex. "Staging").
