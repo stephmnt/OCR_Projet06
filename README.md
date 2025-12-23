@@ -29,6 +29,104 @@ Pour tester le serving du modele en staging :
 mlflow models serve -m "models:/credit_scoring_model/Staging" -p 5001 --no-conda
 ```
 
+## API FastAPI
+
+L'API attend un payload JSON avec une cle `data`. La valeur peut etre un objet
+unique (un client) ou une liste d'objets (plusieurs clients). La liste des
+features requises est disponible via l'endpoint `/features`.
+
+### Exemple d'input (schema + valeurs)
+
+Schema :
+
+```json
+{
+  "data": {
+    "SK_ID_CURR": "int",
+    "NAME_CONTRACT_TYPE": "str",
+    "CODE_GENDER": "str",
+    "FLAG_OWN_CAR": "str",
+    "FLAG_OWN_REALTY": "str",
+    "CNT_CHILDREN": "int",
+    "AMT_INCOME_TOTAL": "float",
+    "AMT_CREDIT": "float",
+    "AMT_ANNUITY": "float",
+    "AMT_GOODS_PRICE": "float",
+    "DAYS_BIRTH": "int",
+    "DAYS_EMPLOYED": "int",
+    "CNT_FAM_MEMBERS": "int"
+  }
+}
+```
+
+Valeurs d'exemple :
+
+```json
+{
+  "data": {
+    "SK_ID_CURR": 100002,
+    "NAME_CONTRACT_TYPE": "Cash loans",
+    "CODE_GENDER": "M",
+    "FLAG_OWN_CAR": "N",
+    "FLAG_OWN_REALTY": "Y",
+    "CNT_CHILDREN": 0,
+    "AMT_INCOME_TOTAL": 202500.0,
+    "AMT_CREDIT": 406597.5,
+    "AMT_ANNUITY": 24700.5,
+    "AMT_GOODS_PRICE": 351000.0,
+    "DAYS_BIRTH": -9461,
+    "DAYS_EMPLOYED": -637,
+    "CNT_FAM_MEMBERS": 1
+  }
+}
+```
+
+Note : l'API valide strictement les champs requis (liste complete dans `/features`).
+
+### Demo live (commandes cles en main)
+
+Lancer l'API :
+
+```shell
+uvicorn app.main:app --reload
+```
+
+Verifier le service :
+
+```shell
+curl -s http://127.0.0.1:8000/health
+```
+
+Voir les features attendues :
+
+```shell
+curl -s http://127.0.0.1:8000/features
+```
+
+Predire un client :
+
+```shell
+curl -s -X POST "http://127.0.0.1:8000/predict?threshold=0.5" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": {
+      "SK_ID_CURR": 100002,
+      "NAME_CONTRACT_TYPE": "Cash loans",
+      "CODE_GENDER": "M",
+      "FLAG_OWN_CAR": "N",
+      "FLAG_OWN_REALTY": "Y",
+      "CNT_CHILDREN": 0,
+      "AMT_INCOME_TOTAL": 202500.0,
+      "AMT_CREDIT": 406597.5,
+      "AMT_ANNUITY": 24700.5,
+      "AMT_GOODS_PRICE": 351000.0,
+      "DAYS_BIRTH": -9461,
+      "DAYS_EMPLOYED": -637,
+      "CNT_FAM_MEMBERS": 1
+    }
+  }'
+```
+
 ## Contenu de la release
 
 - **Preparation + pipeline** : nettoyage / preparation, encodage, imputation et pipeline d'entrainement presentes.

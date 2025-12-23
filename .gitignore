@@ -1,6 +1,7 @@
 ressources/
 .venv/
 data/
+artifacts/
 __pycache__/
 *.pyc
 .DS_Store

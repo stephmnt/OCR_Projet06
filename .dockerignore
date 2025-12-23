@@ -1,0 +1,6 @@
+mlruns/
+*.ipynb
+data/*.csv
+data/*.parquet
+!data/data_final.parquet
+!data/HistGB_final_model.pkl
