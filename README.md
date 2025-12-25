@@ -1,3 +1,13 @@
+---
+title: OCR Projet 06
+emoji: 🤖
+colorFrom: indigo
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # OCR Projet 06 – Crédit
 
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/stephmnt/OCR_Projet06/deploy.yml)](https://github.com/stephmnt/OCR_Projet05/actions/workflows/deploy.yml)
@@ -59,7 +69,7 @@ Le fichier `pyproject.toml` fixe des versions compatibles pour un stack recent
 poetry env use 3.11
 poetry install
 poetry run pytest -q
-poetry run uvicorn app.main:app --reload
+poetry run uvicorn app.main:app --reload --port 7860
 ```
 
 Important : le modele `HistGB_final_model.pkl` doit etre regenere avec la
@@ -118,25 +128,25 @@ toutes les colonnes possibles : `/features?include_all=true`.
 Lancer l'API :
 
 ```shell
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 7860
 ```
 
 Verifier le service :
 
 ```shell
-curl -s http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:7860/health
 ```
 
 Voir les features attendues :
 
 ```shell
-curl -s http://127.0.0.1:8000/features
+curl -s http://127.0.0.1:7860/features
 ```
 
 Predire un client :
 
 ```shell
-curl -s -X POST "http://127.0.0.1:8000/predict?threshold=0.5" \
+curl -s -X POST "http://127.0.0.1:7860/predict?threshold=0.5" \
   -H "Content-Type: application/json" \
   -d '{
     "data": {
@@ -162,8 +172,7 @@ curl -s -X POST "http://127.0.0.1:8000/predict?threshold=0.5" \
 - **Comparaison multi-modeles** : baseline, Naive Bayes, Logistic Regression, Decision Tree, Random Forest,
   HistGradientBoosting, LGBM, XGB sont compares.
 - **Validation croisee + tuning** : `StratifiedKFold`, `GridSearchCV` et Hyperopt sont utilises.
-- **Score metier + seuil optimal** : le `custom_score` est la metrique principale des tableaux de comparaison
-  et de la CV, avec un `best_threshold` calcule.
+- **Score metier + seuil optimal** : le `custom_score` est la metrique principale des tableaux de comparaison et de la CV, avec un `best_threshold` calcule.
 - **Explicabilite** : feature importance, SHAP et LIME sont inclus.
 - **MLOps (MLflow)** : tracking des params / metriques (dont `custom_score` et `best_threshold`), tags,
   registry et passage en "Staging".
@@ -172,7 +181,7 @@ curl -s -X POST "http://127.0.0.1:8000/predict?threshold=0.5" \
 
 ## Réduction des features
 
-Réduction des features : l’API utilise un top‑10 SHAP, alors que la mission insiste sur une réduction à l’aide d’une matrice de corrélation. La corrélation est bien documentée dans le notebook d’exploration, mais la liste utilisée par l’API n’est pas explicitement issue de cette matrice. À clarifier dans la doc ou aligner la sélection sur la corrélation. Réfs : P6_MANET_Stephane_notebook_exploration.ipynb, main.py, README.md.
+Réduction des features : l’API utilise un top‑10 SHAP, alors que la mission insiste sur une réduction à l’aide d’une matrice de corrélation. La corrélation est bien documentée dans le notebook d’exploration, mais la liste utilisée par l’API n’est pas explicitement issue de cette matrice. À clarifier dans la doc ou aligner la sélection sur la corrélation.
 
 ## Glossaire rapide
 
