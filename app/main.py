@@ -4,8 +4,13 @@ import logging
 import os
 import pickle
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
+import time
 from typing import Any
+import uuid
 
 import numpy as np
 import pandas as pd
@@ -25,6 +30,12 @@ USE_REDUCED_INPUTS = os.getenv("USE_REDUCED_INPUTS", "1") != "0"
 CORRELATION_THRESHOLD = float(os.getenv("CORRELATION_THRESHOLD", "0.85"))
 CORRELATION_SAMPLE_SIZE = int(os.getenv("CORRELATION_SAMPLE_SIZE", "50000"))
 ALLOW_MISSING_ARTIFACTS = os.getenv("ALLOW_MISSING_ARTIFACTS", "0") == "1"
+LOG_PREDICTIONS = os.getenv("LOG_PREDICTIONS", "1") == "1"
+LOG_DIR = Path(os.getenv("LOG_DIR", "logs"))
+LOG_FILE = os.getenv("LOG_FILE", "predictions.jsonl")
+LOG_INCLUDE_INPUTS = os.getenv("LOG_INCLUDE_INPUTS", "1") == "1"
+LOG_HASH_SK_ID = os.getenv("LOG_HASH_SK_ID", "0") == "1"
+MODEL_VERSION = os.getenv("MODEL_VERSION", MODEL_PATH.name)
 
 IGNORE_FEATURES = ["is_train", "is_test", "TARGET", "SK_ID_CURR"]
 ENGINEERED_FEATURES = [
@@ -103,6 +114,82 @@ class DummyModel:
 
     def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         return np.zeros(len(X), dtype=int)
+
+
+def _json_fallback(obj: Any) -> Any:
+    if isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    if isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    if isinstance(obj, (pd.Timestamp,)):
+        return obj.isoformat()
+    return str(obj)
+
+
+def _hash_value(value: Any) -> str:
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+
+def _append_log_entries(entries: list[dict[str, Any]]) -> None:
+    if not LOG_PREDICTIONS:
+        return
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = LOG_DIR / LOG_FILE
+        with log_path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, ensure_ascii=True, default=_json_fallback) + "\n")
+    except OSError as exc:
+        logger.warning("Failed to write prediction logs: %s", exc)
+
+
+def _log_prediction_entries(
+    request_id: str,
+    records: list[dict[str, Any]],
+    results: list[dict[str, Any]] | None,
+    latency_ms: float,
+    threshold: float | None,
+    status_code: int,
+    preprocessor: PreprocessorArtifacts,
+    error: str | None = None,
+) -> None:
+    if not LOG_PREDICTIONS:
+        return
+    if not records:
+        records = [{}]
+    timestamp = datetime.now(timezone.utc).isoformat()
+    required_cols = preprocessor.required_input_columns
+    entries: list[dict[str, Any]] = []
+    for idx, record in enumerate(records):
+        inputs: dict[str, Any] = {}
+        if LOG_INCLUDE_INPUTS:
+            inputs = {col: record.get(col) for col in required_cols if col in record}
+            if LOG_HASH_SK_ID and "SK_ID_CURR" in inputs:
+                inputs["SK_ID_CURR"] = _hash_value(inputs["SK_ID_CURR"])
+        entry: dict[str, Any] = {
+            "timestamp": timestamp,
+            "request_id": request_id,
+            "endpoint": "/predict",
+            "latency_ms": round(latency_ms, 3),
+            "status_code": status_code,
+            "model_version": MODEL_VERSION,
+            "threshold": threshold,
+            "inputs": inputs,
+        }
+        if results and idx < len(results):
+            result = results[idx]
+            sk_id = result.get("sk_id_curr")
+            entry.update(
+                {
+                    "sk_id_curr": _hash_value(sk_id) if LOG_HASH_SK_ID and sk_id is not None else sk_id,
+                    "probability": result.get("probability"),
+                    "prediction": result.get("prediction"),
+                }
+            )
+        if error:
+            entry["error"] = error
+        entries.append(entry)
+    _append_log_entries(entries)
 
 
 def new_features_creation(df: pd.DataFrame) -> pd.DataFrame:
@@ -654,38 +741,88 @@ def predict(
 ) -> dict[str, Any]:
     model = app.state.model
     preprocessor: PreprocessorArtifacts = app.state.preprocessor
+    request_id = str(uuid.uuid4())
+    start_time = time.perf_counter()
     records = payload.data if isinstance(payload.data, list) else [payload.data]
 
     if not records:
         raise HTTPException(status_code=422, detail={"message": "No input records provided."})
 
-    df_raw = pd.DataFrame.from_records(records)
-    if "SK_ID_CURR" not in df_raw.columns:
-        raise HTTPException(status_code=422, detail={"message": "SK_ID_CURR is required."})
+    try:
+        df_raw = pd.DataFrame.from_records(records)
+        if "SK_ID_CURR" not in df_raw.columns:
+            raise HTTPException(status_code=422, detail={"message": "SK_ID_CURR is required."})
 
-    sk_ids = df_raw["SK_ID_CURR"].tolist()
-    features = preprocess_input(df_raw, preprocessor)
+        sk_ids = df_raw["SK_ID_CURR"].tolist()
+        features = preprocess_input(df_raw, preprocessor)
 
-    if hasattr(model, "predict_proba"):
-        proba = model.predict_proba(features)[:, 1]
-        use_threshold = DEFAULT_THRESHOLD if threshold is None else threshold
-        preds = (proba >= use_threshold).astype(int)
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(features)[:, 1]
+            use_threshold = DEFAULT_THRESHOLD if threshold is None else threshold
+            preds = (proba >= use_threshold).astype(int)
+            results = [
+                {
+                    "sk_id_curr": sk_id,
+                    "probability": float(prob),
+                    "prediction": int(pred),
+                }
+                for sk_id, prob, pred in zip(sk_ids, proba, preds)
+            ]
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
+            _log_prediction_entries(
+                request_id=request_id,
+                records=records,
+                results=results,
+                latency_ms=latency_ms,
+                threshold=use_threshold,
+                status_code=200,
+                preprocessor=preprocessor,
+            )
+            return {"predictions": results, "threshold": use_threshold}
+
+        preds = model.predict(features)
         results = [
             {
                 "sk_id_curr": sk_id,
-                "probability": float(prob),
                 "prediction": int(pred),
             }
-            for sk_id, prob, pred in zip(sk_ids, proba, preds)
+            for sk_id, pred in zip(sk_ids, preds)
         ]
-        return {"predictions": results, "threshold": use_threshold}
-
-    preds = model.predict(features)
-    results = [
-        {
-            "sk_id_curr": sk_id,
-            "prediction": int(pred),
-        }
-        for sk_id, pred in zip(sk_ids, preds)
-    ]
-    return {"predictions": results, "threshold": None}
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        _log_prediction_entries(
+            request_id=request_id,
+            records=records,
+            results=results,
+            latency_ms=latency_ms,
+            threshold=None,
+            status_code=200,
+            preprocessor=preprocessor,
+        )
+        return {"predictions": results, "threshold": None}
+    except HTTPException as exc:
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        _log_prediction_entries(
+            request_id=request_id,
+            records=records,
+            results=None,
+            latency_ms=latency_ms,
+            threshold=threshold,
+            status_code=exc.status_code,
+            preprocessor=preprocessor,
+            error=json.dumps(detail, ensure_ascii=True),
+        )
+        raise
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        _log_prediction_entries(
+            request_id=request_id,
+            records=records,
+            results=None,
+            latency_ms=latency_ms,
+            threshold=threshold,
+            status_code=500,
+            preprocessor=preprocessor,
+            error=str(exc),
+        )
+        raise

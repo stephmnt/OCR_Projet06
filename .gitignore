@@ -2,6 +2,8 @@ ressources/
 .venv/
 __pycache__/
 *.pyc
+logs/
+reports/
 data/*
 !data/HistGB_final_model.pkl
 artifacts/*

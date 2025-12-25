@@ -131,22 +131,23 @@ Lancer l'API :
 uvicorn app.main:app --reload --port 7860
 ```
 
-Verifier le service :
+Verifier le service (HF) :
 
 ```shell
-curl -s http://127.0.0.1:7860/health
+BASE_URL="https://stephmnt-ocr_projet06.hf.space"
+curl -s "${BASE_URL}/health"
 ```
 
-Voir les features attendues :
+Voir les features attendues (HF) :
 
 ```shell
-curl -s http://127.0.0.1:7860/features
+curl -s "${BASE_URL}/features"
 ```
 
-Predire un client :
+Predire un client (HF) :
 
 ```shell
-curl -s -X POST "http://127.0.0.1:7860/predict?threshold=0.5" \
+curl -s -X POST "${BASE_URL}/predict?threshold=0.5" \
   -H "Content-Type: application/json" \
   -d '{
     "data": {
@@ -164,6 +165,86 @@ curl -s -X POST "http://127.0.0.1:7860/predict?threshold=0.5" \
     }
   }'
 ```
+
+Predire plusieurs clients (batch, HF) :
+
+```shell
+curl -s -X POST "${BASE_URL}/predict?threshold=0.45" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": [
+      {
+        "SK_ID_CURR": 100002,
+        "EXT_SOURCE_2": 0.61,
+        "EXT_SOURCE_3": 0.75,
+        "AMT_ANNUITY": 24700.5,
+        "EXT_SOURCE_1": 0.45,
+        "CODE_GENDER": "M",
+        "DAYS_EMPLOYED": -637,
+        "AMT_CREDIT": 406597.5,
+        "AMT_GOODS_PRICE": 351000.0,
+        "DAYS_BIRTH": -9461,
+        "FLAG_OWN_CAR": "N"
+      },
+      {
+        "SK_ID_CURR": 100003,
+        "EXT_SOURCE_2": 0.52,
+        "EXT_SOURCE_3": 0.64,
+        "AMT_ANNUITY": 19000.0,
+        "EXT_SOURCE_1": 0.33,
+        "CODE_GENDER": "F",
+        "DAYS_EMPLOYED": -1200,
+        "AMT_CREDIT": 320000.0,
+        "AMT_GOODS_PRICE": 280000.0,
+        "DAYS_BIRTH": -12000,
+        "FLAG_OWN_CAR": "Y"
+      }
+    ]
+  }'
+```
+
+Exemple d'erreur (champ requis manquant, HF) :
+
+```shell
+curl -s -X POST "${BASE_URL}/predict" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": {
+      "EXT_SOURCE_2": 0.61
+    }
+  }'
+```
+
+## Monitoring & Data Drift (Etape 3)
+
+L'API enregistre les appels `/predict` en JSONL (inputs, outputs, latence).
+Par defaut, les logs sont stockes dans `logs/predictions.jsonl`.
+
+Variables utiles :
+
+- `LOG_PREDICTIONS=1` active l'ecriture des logs (defaut: 1)
+- `LOG_DIR=logs`
+- `LOG_FILE=predictions.jsonl`
+- `LOG_HASH_SK_ID=1` pour anonymiser `SK_ID_CURR`
+
+Exemple local :
+
+```shell
+LOG_PREDICTIONS=1 LOG_DIR=logs uvicorn app.main:app --reload --port 7860
+```
+
+Apres quelques requetes, generer le rapport de drift :
+
+```shell
+python monitoring/drift_report.py \
+  --logs logs/predictions.jsonl \
+  --reference data/data_final.parquet \
+  --output-dir reports
+```
+
+Le rapport HTML est genere dans `reports/drift_report.html` (avec des plots dans
+`reports/plots/`). Sur Hugging Face, le disque est ephemere : telecharge les logs
+avant d'analyser.
 
 ## Contenu de la release
 

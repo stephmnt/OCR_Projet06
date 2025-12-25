@@ -42,6 +42,8 @@ jobs:
             --exclude '__pycache__' \
             --exclude 'mlruns' \
             --exclude '*.ipynb' \
+            --exclude 'logs' \
+            --exclude 'reports' \
             --exclude 'screen-mlflow.png' \
             --exclude 'data/*.csv' \
             --exclude 'data/*.parquet' \
