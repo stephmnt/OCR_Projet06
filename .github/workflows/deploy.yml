@@ -21,11 +21,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install poetry
-          poetry install --no-interaction --no-ansi
+          pip install -r requirements.txt
 
       - name: Run tests
-        run: poetry run pytest --cov=app --cov=monitoring --cov-report=term-missing -q
+        run: pytest --cov=app --cov=monitoring --cov-report=term-missing -q
 
       - name: Build Docker image
         run: docker build -t ocr-projet06:ci .
