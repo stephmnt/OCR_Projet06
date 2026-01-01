@@ -9,8 +9,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ app/
-COPY data/HistGB_final_model.pkl data/
-COPY artifacts/preprocessor.joblib artifacts/
+COPY app_entry.py app.py gradio_app.py ./
+COPY data/ data/
+COPY artifacts/ artifacts/
 
 EXPOSE 7860
 
