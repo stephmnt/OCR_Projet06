@@ -1,0 +1,20 @@
+[
+  {
+    "name": "optimized_preprocess",
+    "batches": 10,
+    "batch_size": 100,
+    "mean_ms": 35.73424170026556,
+    "p50_ms": 33.76843745354563,
+    "p95_ms": 43.09078284422866,
+    "throughput_rows_per_sec": 2798.4363244304373
+  },
+  {
+    "name": "legacy_preprocess_alignment",
+    "batches": 10,
+    "batch_size": 100,
+    "mean_ms": 47.56558339577168,
+    "p50_ms": 47.193103993777186,
+    "p95_ms": 51.22594404965639,
+    "throughput_rows_per_sec": 2102.360422407632
+  }
+]

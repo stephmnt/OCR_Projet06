@@ -1,0 +1,38 @@
+         157685 function calls (154232 primitive calls) in 0.071 seconds
+
+   Ordered by: cumulative time
+   List reduced from 783 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.001    0.001    0.060    0.060 /Users/steph/Code/Python/Jupyter/OCR_projet06/app/main.py:772(preprocess_input)
+      310    0.001    0.000    0.015    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:4282(__setitem__)
+      310    0.000    0.000    0.014    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:4525(_set_item)
+      310    0.000    0.000    0.011    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:4492(_set_item_mgr)
+        1    0.000    0.000    0.010    0.010 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py:2263(predict_proba)
+        1    0.000    0.000    0.010    0.010 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py:1293(_raw_predict)
+      288    0.001    0.000    0.009    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/series.py:392(__init__)
+      158    0.001    0.000    0.009    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/generic.py:7164(fillna)
+        1    0.000    0.000    0.009    0.009 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/reshape/encoding.py:44(get_dummies)
+      201    0.001    0.000    0.009    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/internals/managers.py:317(apply)
+      297    0.000    0.000    0.008    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:4481(_iset_item_mgr)
+      363    0.001    0.000    0.008    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:4073(__getitem__)
+        1    0.001    0.001    0.008    0.008 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py:1333(_predict_iterations)
+      299    0.002    0.000    0.008    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/internals/managers.py:1085(iset)
+      133    0.007    0.000    0.007    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/sklearn/ensemble/_hist_gradient_boosting/predictor.py:49(predict)
+      158    0.000    0.000    0.007    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/internals/base.py:180(fillna)
+      160    0.001    0.000    0.007    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/tools/numeric.py:47(to_numeric)
+      377    0.001    0.000    0.006    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:4637(_get_item_cache)
+      158    0.001    0.000    0.006    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/internals/blocks.py:1709(fillna)
+34692/34379    0.004    0.000    0.006    0.000 {built-in method builtins.isinstance}
+        2    0.000    0.000    0.005    0.003 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/sklearn/utils/validation.py:2793(validate_data)
+      353    0.000    0.000    0.005    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:3994(_ixs)
+        2    0.000    0.000    0.005    0.002 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/sklearn/utils/validation.py:725(check_array)
+       15    0.000    0.000    0.004    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/reshape/encoding.py:239(_get_dummies_1d)
+  156/143    0.001    0.000    0.004    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/internals/blocks.py:1590(where)
+      348    0.001    0.000    0.003    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/construction.py:517(sanitize_array)
+       50    0.000    0.000    0.003    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/ops/common.py:62(new_method)
+      441    0.000    0.000    0.003    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/dtypes/missing.py:101(isna)
+      353    0.000    0.000    0.003    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/frame.py:4619(_box_col_values)
+      441    0.000    0.000    0.003    0.000 /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/dtypes/missing.py:184(_isna)
+
+

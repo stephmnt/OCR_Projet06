@@ -16,7 +16,6 @@ artifacts/*
 mlruns/
 .DS_Store
 *.code-workspace
-docs/
 presentation_projet08.pptx
 rapport_projet06.md
 

@@ -62,24 +62,33 @@ Parametres utiles (selection des features) :
 - `FEATURE_SELECTION_TOP_N` (defaut: `8`)
 - `FEATURE_SELECTION_MIN_CORR` (defaut: `0.02`)
 
-### Environnement Poetry (recommande)
+### Environnement pip (dev)
 
-Le fichier `pyproject.toml` fixe des versions compatibles pour un stack recent
-(`numpy>=2`, `pyarrow>=15`, `scikit-learn>=1.6`). L'environnement vise Python
-3.11.
+Le developpement local utilise pip et `requirements.txt` (versions figees),
+avec Python 3.11+.
 
 ```shell
-poetry env use 3.11
-poetry install
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+pytest -q
+uvicorn app.main:app --reload --port 7860
+```
+
+### Environnement Poetry (livrable)
+
+Le livrable inclut `pyproject.toml`, aligne sur `requirements.txt`. Si besoin :
+
+```shell
+poetry install --with dev
 poetry run pytest -q
 poetry run uvicorn app.main:app --reload --port 7860
 ```
 
 Important : le modele `HistGB_final_model.pkl` doit etre regenere avec la
-nouvelle version de scikit-learn (re-execution de
-`P6_MANET_Stephane_notebook_modélisation.ipynb`, cellule de sauvegarde pickle).
-
-Note : `requirements.txt` est aligne sur `pyproject.toml` (meme versions).
+version de scikit-learn definie dans `requirements.txt` / `pyproject.toml`
+(re-execution de `P6_MANET_Stephane_notebook_modélisation.ipynb`, cellule de
+sauvegarde pickle).
 
 ### Exemple d'input (schema + valeurs)
 
@@ -122,6 +131,14 @@ Valeurs d'exemple :
   }
 }
 ```
+
+### Data contract (validation)
+
+- Types numeriques stricts (invalides -> 422).
+- Ranges numeriques (min/max entrainement) controles.
+- Categoriels normalises: `CODE_GENDER` -> {`F`, `M`}, `FLAG_OWN_CAR` -> {`Y`, `N`}.
+- Sentinelle `DAYS_EMPLOYED=365243` remplacee par NaN.
+- Logs enrichis via `data_quality` pour distinguer drift vs qualite de donnees.
 
 Note : l'API valide strictement les champs requis (`/features`). Pour afficher
 toutes les colonnes possibles : `/features?include_all=true`.
@@ -231,6 +248,10 @@ Variables utiles :
 - `LOGS_ACCESS_TOKEN` pour proteger l'endpoint `/logs`
 - `LOG_HASH_SK_ID=1` pour anonymiser `SK_ID_CURR`
 
+Les logs incluent un bloc `data_quality` par requete (champs manquants,
+types invalides, out-of-range, categories inconnues, sentinelle
+`DAYS_EMPLOYED`).
+
 Exemple local :
 
 ```shell
@@ -251,26 +272,69 @@ Alternative :
 curl -s -H "Authorization: Bearer $LOGS_ACCESS_TOKEN" "${BASE_URL}/logs?tail=200"
 ```
 
-Apres quelques requêtes, gélérer le rapport de drift :
+Apres quelques requêtes, générer le rapport de drift :
 
 ```shell
 python monitoring/drift_report.py \
   --logs logs/predictions.jsonl \
   --reference data/data_final.parquet \
-  --output-dir reports
+  --output-dir reports \
+  --min-prod-samples 200 \
+  --fdr-alpha 0.05 \
+  --prod-since "2024-01-01T00:00:00Z" \
+  --prod-until "2024-01-31T23:59:59Z"
 ```
 
 Le rapport HTML est généré dans `reports/drift_report.html` (avec des plots dans
 `reports/plots/`). Sur Hugging Face, le disque est éphemère : télécharger les logs
 avant d'analyser.
 
+Le drift est calcule uniquement si `n_prod >= --min-prod-samples` (defaut 200).
+Sinon, un badge "Sample insuffisant" est affiche et les alertes sont desactivees.
+
+Robustesse integree:
+
+- Categoriels: PSI avec lissage (`--psi-eps`) + categories rares regroupees (OTHER).
+- Numeriques: KS corrige par FDR (Benjamini-Hochberg, `--fdr-alpha`).
+- Sentinel `DAYS_EMPLOYED`: converti en NaN + taux suivi.
+
 Le rapport inclut aussi la distribution des scores predits et le taux de prediction
-(option `--score-bins` pour ajuster le nombre de bins).
+(option `--score-bins` pour ajuster le nombre de bins), ainsi qu'une section
+Data Quality si les logs contiennent `data_quality` (types, NaN, out-of-range,
+categories inconnues).
+
+Pour simuler des fenetres glissantes, utiliser `--prod-since` / `--prod-until`
+avec les timestamps des logs.
+
+Runbook drift: `docs/monitoring/runbook.md`.
 
 Captures (snapshot local du reporting + stockage):
 
 - Rapport: `docs/monitoring/drift_report.html` + `docs/monitoring/plots/`
 - Stockage des logs: `docs/monitoring/logs_storage.png`
+
+## Profiling & Optimisation (Etape 4)
+
+Profiling et benchmark d'inference (cProfile + latence) :
+
+```shell
+python profiling/profile_inference.py \
+  --sample-size 2000 \
+  --batch-size 128 \
+  --runs 3
+```
+
+Sorties:
+
+- `docs/performance/benchmark_results.json`
+- `docs/performance/profile_summary.txt`
+- Rapport detaille: `docs/performance/performance_report.md`
+
+Dashboard local Streamlit (monitoring + drift):
+
+```shell
+python -m streamlit run monitoring/streamlit_app.py
+```
 
 ## Contenu de la release
 
@@ -282,8 +346,9 @@ Captures (snapshot local du reporting + stockage):
 - **Score metier + seuil optimal** : le `custom_score` est la metrique principale des tableaux de comparaison et de la CV, avec un `best_threshold` calcule.
 - **Explicabilite** : feature importance, SHAP et LIME sont inclus.
 - **Selection de features par correlation** : top‑N numeriques + un petit set categoriel, expose via `/features`.
-- **Monitoring & drift** : rapport HTML avec KS/PSI + distribution des scores predits et taux de prediction
-  (snapshots dans `docs/monitoring/`).
+- **Monitoring & drift** : rapport HTML avec gating par volume, PSI robuste, KS + FDR, data quality et
+  distribution des scores (snapshots dans `docs/monitoring/`).
+- **Profiling & optimisation** : benchmark d'inference + profil cProfile (dossier `docs/performance/`).
 - **CI/CD** : tests avec couverture (`pytest-cov`), build Docker et deploy vers Hugging Face Spaces.
 
 ![Screenshot MLFlow](https://raw.githubusercontent.com/stephmnt/credit-scoring-mlops/main/screen-mlflow.png)
@@ -304,5 +369,4 @@ Captures (snapshot local du reporting + stockage):
 
 * Compléter les tests API: /logs (auth OK/KO), batch predict, param threshold, SK_ID_CURR manquant, outliers dans test_api.py.
 * Simplifier le fallback ALLOW_MISSING_ARTIFACTS et DummyModel si les artefacts sont versionnés (nettoyer main.py et conftest.py).
-* Unifier la gestion des dépendances (Poetry vs requirements.txt) et aligner pyproject.toml / requirements.txt.
 * Si l’évaluateur attend une stratégie de branches, créer une branche feature et fusionner pour preuve.

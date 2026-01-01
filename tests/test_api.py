@@ -108,3 +108,23 @@ def test_predict_out_of_range(client):
     assert resp.status_code == 422
     detail = resp.json().get("detail", {})
     assert detail.get("message") == "Input contains values outside expected ranges."
+
+
+def test_predict_normalizes_categoricals(client):
+    preprocessor = client.app.state.preprocessor
+    payload = _build_payload(preprocessor)
+    if "CODE_GENDER" in payload["data"]:
+        payload["data"]["CODE_GENDER"] = "female"
+    if "FLAG_OWN_CAR" in payload["data"]:
+        payload["data"]["FLAG_OWN_CAR"] = "true"
+    resp = client.post("/predict", json=payload)
+    assert resp.status_code == 200
+
+
+def test_predict_days_employed_sentinel(client):
+    preprocessor = client.app.state.preprocessor
+    payload = _build_payload(preprocessor)
+    if "DAYS_EMPLOYED" in payload["data"]:
+        payload["data"]["DAYS_EMPLOYED"] = 365243
+    resp = client.post("/predict", json=payload)
+    assert resp.status_code == 200

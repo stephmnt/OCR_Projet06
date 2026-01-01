@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Drift Report</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 24px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ddd; padding: 8px; }
+      th { background: #f3f3f3; }
+      img { max-width: 720px; }
+    </style>
+  </head>
+  <body>
+    <h2>Production Monitoring Summary</h2>
+    <ul>
+      <li>Total calls: 1</li>
+      <li>Error rate: 0.00%</li>
+      <li>Latency p50: 82.04 ms</li>
+      <li>Latency p95: 82.04 ms</li>
+    </ul>
+    <h2>Score Monitoring</h2>
+    <ul>
+      <li>Score mean: 0.3755</li>
+<li>Score p50: 0.3755</li>
+<li>Score p95: 0.3755</li>
+<li>Score min: 0.3755</li>
+<li>Score max: 0.3755</li>
+<li>Predicted default rate: 0.00%</li>
+    </ul>
+    <img src='plots/score_distribution.png' />
+<img src='plots/prediction_rate.png' />
+    <h2>Data Drift Summary</h2>
+    <table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th>feature</th>
+      <th>type</th>
+      <th>ks_stat</th>
+      <th>p_value</th>
+      <th>drift_detected</th>
+      <th>psi</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>EXT_SOURCE_2</td>
+      <td>numeric</td>
+      <td>0.5905</td>
+      <td>0.819238</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>EXT_SOURCE_3</td>
+      <td>numeric</td>
+      <td>0.9047</td>
+      <td>0.191111</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>AMT_ANNUITY</td>
+      <td>numeric</td>
+      <td>0.5184</td>
+      <td>0.963407</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>EXT_SOURCE_1</td>
+      <td>numeric</td>
+      <td>0.5822</td>
+      <td>0.836199</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>CODE_GENDER</td>
+      <td>categorical</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>True</td>
+      <td>9.6538</td>
+    </tr>
+    <tr>
+      <td>DAYS_EMPLOYED</td>
+      <td>numeric</td>
+      <td>0.6508</td>
+      <td>0.698660</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>AMT_CREDIT</td>
+      <td>numeric</td>
+      <td>0.5996</td>
+      <td>0.801040</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>AMT_GOODS_PRICE</td>
+      <td>numeric</td>
+      <td>0.6115</td>
+      <td>0.777177</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>DAYS_BIRTH</td>
+      <td>numeric</td>
+      <td>0.9474</td>
+      <td>0.105579</td>
+      <td>False</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <td>FLAG_OWN_CAR</td>
+      <td>categorical</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>True</td>
+      <td>4.3985</td>
+    </tr>
+  </tbody>
+</table>
+    <h2>Feature Distributions</h2>
+    <h4>EXT_SOURCE_2</h4><img src='plots/EXT_SOURCE_2.png' />
+<h4>EXT_SOURCE_3</h4><img src='plots/EXT_SOURCE_3.png' />
+<h4>AMT_ANNUITY</h4><img src='plots/AMT_ANNUITY.png' />
+<h4>EXT_SOURCE_1</h4><img src='plots/EXT_SOURCE_1.png' />
+<h4>CODE_GENDER</h4><img src='plots/CODE_GENDER.png' />
+<h4>DAYS_EMPLOYED</h4><img src='plots/DAYS_EMPLOYED.png' />
+<h4>AMT_CREDIT</h4><img src='plots/AMT_CREDIT.png' />
+<h4>AMT_GOODS_PRICE</h4><img src='plots/AMT_GOODS_PRICE.png' />
+<h4>DAYS_BIRTH</h4><img src='plots/DAYS_BIRTH.png' />
+<h4>FLAG_OWN_CAR</h4><img src='plots/FLAG_OWN_CAR.png' />
+  </body>
+</html>

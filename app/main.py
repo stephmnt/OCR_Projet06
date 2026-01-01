@@ -87,6 +87,31 @@ OUTLIER_COLUMNS = [
     "AMT_REQ_CREDIT_BUREAU_QRT",
 ]
 
+CODE_GENDER_MAPPING = {
+    "F": "F",
+    "FEMALE": "F",
+    "0": "F",
+    "W": "F",
+    "WOMAN": "F",
+    "M": "M",
+    "MALE": "M",
+    "1": "M",
+    "MAN": "M",
+}
+FLAG_OWN_CAR_MAPPING = {
+    "Y": "Y",
+    "YES": "Y",
+    "TRUE": "Y",
+    "1": "Y",
+    "T": "Y",
+    "N": "N",
+    "NO": "N",
+    "FALSE": "N",
+    "0": "N",
+    "F": "N",
+}
+DAYS_EMPLOYED_SENTINEL = 365243
+
 
 class PredictionRequest(BaseModel):
     data: dict[str, Any] | list[dict[str, Any]]
@@ -139,6 +164,104 @@ def _hash_value(value: Any) -> str:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
+def _normalize_category_value(value: object, mapping: dict[str, str]) -> object:
+    if pd.isna(value):
+        return np.nan
+    key = str(value).strip().upper()
+    if not key:
+        return np.nan
+    return mapping.get(key, "Unknown")
+
+
+def _normalize_inputs(
+    df_raw: pd.DataFrame,
+    preprocessor: PreprocessorArtifacts,
+) -> tuple[pd.DataFrame, dict[str, pd.Series], pd.Series]:
+    df = df_raw.copy()
+    for col in preprocessor.required_input_columns:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    unknown_masks: dict[str, pd.Series] = {}
+    if "CODE_GENDER" in df.columns:
+        raw = df["CODE_GENDER"]
+        normalized = raw.apply(lambda v: _normalize_category_value(v, CODE_GENDER_MAPPING))
+        unknown_masks["CODE_GENDER"] = normalized.eq("Unknown") & raw.notna()
+        df["CODE_GENDER"] = normalized
+    if "FLAG_OWN_CAR" in df.columns:
+        raw = df["FLAG_OWN_CAR"]
+        normalized = raw.apply(lambda v: _normalize_category_value(v, FLAG_OWN_CAR_MAPPING))
+        unknown_masks["FLAG_OWN_CAR"] = normalized.eq("Unknown") & raw.notna()
+        df["FLAG_OWN_CAR"] = normalized
+
+    sentinel_mask = pd.Series(False, index=df.index)
+    if "DAYS_EMPLOYED" in df.columns:
+        values = pd.to_numeric(df["DAYS_EMPLOYED"], errors="coerce")
+        sentinel_mask = values == DAYS_EMPLOYED_SENTINEL
+        if sentinel_mask.any():
+            df.loc[sentinel_mask, "DAYS_EMPLOYED"] = np.nan
+
+    return df, unknown_masks, sentinel_mask
+
+
+def _build_data_quality_records(
+    df_raw: pd.DataFrame,
+    df_norm: pd.DataFrame,
+    unknown_masks: dict[str, pd.Series],
+    sentinel_mask: pd.Series,
+    preprocessor: PreprocessorArtifacts,
+) -> list[dict[str, Any]]:
+    required_cols = preprocessor.required_input_columns
+    numeric_required = preprocessor.numeric_required_columns
+    numeric_ranges = {
+        col: bounds
+        for col, bounds in preprocessor.numeric_ranges.items()
+        if col in numeric_required
+    }
+
+    missing_mask = df_norm[required_cols].isna() if required_cols else pd.DataFrame(index=df_norm.index)
+    invalid_masks: dict[str, pd.Series] = {}
+    out_of_range_masks: dict[str, pd.Series] = {}
+
+    for col in numeric_required:
+        if col not in df_raw.columns:
+            invalid_masks[col] = pd.Series(False, index=df_norm.index)
+            continue
+        raw = df_raw[col]
+        coerced = pd.to_numeric(raw, errors="coerce")
+        invalid_masks[col] = coerced.isna() & raw.notna()
+
+    for col, (min_val, max_val) in numeric_ranges.items():
+        if col not in df_norm.columns:
+            out_of_range_masks[col] = pd.Series(False, index=df_norm.index)
+            continue
+        values = pd.to_numeric(df_norm[col], errors="coerce")
+        out_of_range_masks[col] = (values < min_val) | (values > max_val)
+
+    records: list[dict[str, Any]] = []
+    for idx in df_norm.index:
+        missing_cols = (
+            [col for col in required_cols if missing_mask.at[idx, col]]
+            if required_cols
+            else []
+        )
+        invalid_cols = [col for col, mask in invalid_masks.items() if mask.at[idx]]
+        out_of_range_cols = [col for col, mask in out_of_range_masks.items() if mask.at[idx]]
+        unknown_cols = [col for col, mask in unknown_masks.items() if mask.at[idx]]
+        nan_rate = float(missing_mask.loc[idx].mean()) if not missing_mask.empty else 0.0
+        records.append(
+            {
+                "missing_required_columns": missing_cols,
+                "invalid_numeric_columns": invalid_cols,
+                "out_of_range_columns": out_of_range_cols,
+                "unknown_categories": unknown_cols,
+                "days_employed_sentinel": bool(sentinel_mask.at[idx]) if not sentinel_mask.empty else False,
+                "nan_rate": nan_rate,
+            }
+        )
+    return records
+
+
 def _append_log_entries(entries: list[dict[str, Any]]) -> None:
     if not LOG_PREDICTIONS:
         return
@@ -160,6 +283,7 @@ def _log_prediction_entries(
     threshold: float | None,
     status_code: int,
     preprocessor: PreprocessorArtifacts,
+    data_quality: list[dict[str, Any]] | None = None,
     error: str | None = None,
 ) -> None:
     if not LOG_PREDICTIONS:
@@ -185,6 +309,8 @@ def _log_prediction_entries(
             "threshold": threshold,
             "inputs": inputs,
         }
+        if data_quality and idx < len(data_quality):
+            entry["data_quality"] = data_quality[idx]
         if results and idx < len(results):
             result = results[idx]
             sk_id = result.get("sk_id_curr")
@@ -694,8 +820,17 @@ def _compute_correlated_imputation(
     )
 
 
-def _ensure_required_columns(df: pd.DataFrame, required_cols: list[str]) -> None:
-    missing = [col for col in required_cols if col not in df.columns or df[col].isna().any()]
+def _ensure_required_columns(
+    df: pd.DataFrame,
+    required_cols: list[str],
+    allow_missing: set[str] | None = None,
+) -> None:
+    allow_missing = allow_missing or set()
+    missing = [
+        col
+        for col in required_cols
+        if col not in df.columns or (col not in allow_missing and df[col].isna().any())
+    ]
     if missing:
         raise HTTPException(
             status_code=422,
@@ -711,7 +846,7 @@ def _validate_numeric_inputs(df: pd.DataFrame, numeric_cols: list[str]) -> None:
     invalid = []
     for col in numeric_cols:
         coerced = pd.to_numeric(df[col], errors="coerce")
-        if coerced.isna().any():
+        if (coerced.isna() & df[col].notna()).any():
             invalid.append(col)
     if invalid:
         raise HTTPException(
@@ -732,9 +867,8 @@ def _validate_numeric_ranges(df: pd.DataFrame, numeric_ranges: dict[str, tuple[f
         if col not in df.columns:
             continue
         values = pd.to_numeric(df[col], errors="coerce")
-        if values.isna().any():
-            continue
-        if ((values < min_val) | (values > max_val)).any():
+        mask = values.notna()
+        if mask.any() and ((values[mask] < min_val) | (values[mask] > max_val)).any():
             out_of_range.append(col)
     if out_of_range:
         raise HTTPException(
@@ -776,7 +910,8 @@ def preprocess_input(df_raw: pd.DataFrame, artifacts: PreprocessorArtifacts) -> 
         if col not in df.columns:
             df[col] = np.nan
 
-    _ensure_required_columns(df, artifacts.required_input_columns)
+    allow_missing = {"DAYS_EMPLOYED"}
+    _ensure_required_columns(df, artifacts.required_input_columns, allow_missing=allow_missing)
     _validate_numeric_inputs(df, artifacts.numeric_required_columns)
     _validate_numeric_ranges(df, {k: v for k, v in artifacts.numeric_ranges.items() if k in artifacts.numeric_required_columns})
 
@@ -788,10 +923,7 @@ def preprocess_input(df_raw: pd.DataFrame, artifacts: PreprocessorArtifacts) -> 
     df = new_features_creation(df)
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-    for col in artifacts.columns_keep:
-        if col not in df.columns:
-            df[col] = np.nan
-    df = df[artifacts.columns_keep]
+    df = df.reindex(columns=artifacts.columns_keep, fill_value=np.nan)
 
     _apply_correlated_imputation(df, artifacts)
 
@@ -804,7 +936,7 @@ def preprocess_input(df_raw: pd.DataFrame, artifacts: PreprocessorArtifacts) -> 
         if col in df.columns:
             df[col] = df[col].fillna("Unknown")
 
-    _ensure_required_columns(df, artifacts.required_input_columns)
+    _ensure_required_columns(df, artifacts.required_input_columns, allow_missing=allow_missing)
 
     if "CODE_GENDER" in df.columns and (df["CODE_GENDER"] == "XNA").any():
         raise HTTPException(
@@ -823,10 +955,7 @@ def preprocess_input(df_raw: pd.DataFrame, artifacts: PreprocessorArtifacts) -> 
             )
 
     df_hot = pd.get_dummies(df, columns=artifacts.categorical_columns)
-    for col in artifacts.features_to_scaled:
-        if col not in df_hot.columns:
-            df_hot[col] = 0
-    df_hot = df_hot[artifacts.features_to_scaled]
+    df_hot = df_hot.reindex(columns=artifacts.features_to_scaled, fill_value=0)
 
     scaled = artifacts.scaler.transform(df_hot)
     return pd.DataFrame(scaled, columns=artifacts.features_to_scaled, index=df.index)
@@ -950,11 +1079,20 @@ def predict(
 
     try:
         df_raw = pd.DataFrame.from_records(records)
-        if "SK_ID_CURR" not in df_raw.columns:
+        df_norm, unknown_masks, sentinel_mask = _normalize_inputs(df_raw, preprocessor)
+        log_records = df_norm.to_dict(orient="records")
+        dq_records = _build_data_quality_records(
+            df_raw,
+            df_norm,
+            unknown_masks,
+            sentinel_mask,
+            preprocessor,
+        )
+        if "SK_ID_CURR" not in df_norm.columns:
             raise HTTPException(status_code=422, detail={"message": "SK_ID_CURR is required."})
 
-        sk_ids = df_raw["SK_ID_CURR"].tolist()
-        features = preprocess_input(df_raw, preprocessor)
+        sk_ids = df_norm["SK_ID_CURR"].tolist()
+        features = preprocess_input(df_norm, preprocessor)
 
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(features)[:, 1]
@@ -971,12 +1109,13 @@ def predict(
             latency_ms = (time.perf_counter() - start_time) * 1000.0
             _log_prediction_entries(
                 request_id=request_id,
-                records=records,
+                records=log_records,
                 results=results,
                 latency_ms=latency_ms,
                 threshold=use_threshold,
                 status_code=200,
                 preprocessor=preprocessor,
+                data_quality=dq_records,
             )
             return {"predictions": results, "threshold": use_threshold}
 
@@ -991,12 +1130,13 @@ def predict(
         latency_ms = (time.perf_counter() - start_time) * 1000.0
         _log_prediction_entries(
             request_id=request_id,
-            records=records,
+            records=log_records,
             results=results,
             latency_ms=latency_ms,
             threshold=None,
             status_code=200,
             preprocessor=preprocessor,
+            data_quality=dq_records,
         )
         return {"predictions": results, "threshold": None}
     except HTTPException as exc:
@@ -1004,12 +1144,13 @@ def predict(
         detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
         _log_prediction_entries(
             request_id=request_id,
-            records=records,
+            records=log_records if "log_records" in locals() else records,
             results=None,
             latency_ms=latency_ms,
             threshold=threshold,
             status_code=exc.status_code,
             preprocessor=preprocessor,
+            data_quality=dq_records if "dq_records" in locals() else None,
             error=json.dumps(detail, ensure_ascii=True),
         )
         raise
@@ -1017,12 +1158,13 @@ def predict(
         latency_ms = (time.perf_counter() - start_time) * 1000.0
         _log_prediction_entries(
             request_id=request_id,
-            records=records,
+            records=log_records if "log_records" in locals() else records,
             results=None,
             latency_ms=latency_ms,
             threshold=threshold,
             status_code=500,
             preprocessor=preprocessor,
+            data_quality=dq_records if "dq_records" in locals() else None,
             error=str(exc),
         )
         raise
