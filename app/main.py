@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -11,10 +11,11 @@ from pathlib import Path
 import time
 from typing import Any
 import uuid
+from collections import deque
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 from sklearn.preprocessing import MinMaxScaler
 import joblib
@@ -27,6 +28,9 @@ ARTIFACTS_PATH = Path(os.getenv("ARTIFACTS_PATH", "artifacts/preprocessor.joblib
 DEFAULT_THRESHOLD = float(os.getenv("PREDICTION_THRESHOLD", "0.5"))
 CACHE_PREPROCESSOR = os.getenv("CACHE_PREPROCESSOR", "1") != "0"
 USE_REDUCED_INPUTS = os.getenv("USE_REDUCED_INPUTS", "1") != "0"
+FEATURE_SELECTION_METHOD = os.getenv("FEATURE_SELECTION_METHOD", "correlation")
+FEATURE_SELECTION_TOP_N = int(os.getenv("FEATURE_SELECTION_TOP_N", "8"))
+FEATURE_SELECTION_MIN_CORR = float(os.getenv("FEATURE_SELECTION_MIN_CORR", "0.02"))
 CORRELATION_THRESHOLD = float(os.getenv("CORRELATION_THRESHOLD", "0.85"))
 CORRELATION_SAMPLE_SIZE = int(os.getenv("CORRELATION_SAMPLE_SIZE", "50000"))
 ALLOW_MISSING_ARTIFACTS = os.getenv("ALLOW_MISSING_ARTIFACTS", "0") == "1"
@@ -36,6 +40,7 @@ LOG_FILE = os.getenv("LOG_FILE", "predictions.jsonl")
 LOG_INCLUDE_INPUTS = os.getenv("LOG_INCLUDE_INPUTS", "1") == "1"
 LOG_HASH_SK_ID = os.getenv("LOG_HASH_SK_ID", "0") == "1"
 MODEL_VERSION = os.getenv("MODEL_VERSION", MODEL_PATH.name)
+LOGS_ACCESS_TOKEN = os.getenv("LOGS_ACCESS_TOKEN")
 
 IGNORE_FEATURES = ["is_train", "is_test", "TARGET", "SK_ID_CURR"]
 ENGINEERED_FEATURES = [
@@ -53,8 +58,9 @@ ENGINEERED_SOURCES = [
     "CNT_FAM_MEMBERS",
     "AMT_ANNUITY",
 ]
-# Top inputs derived from SHAP importance (modeling notebook), limited to application features.
-REDUCED_INPUT_FEATURES = [
+FEATURE_SELECTION_CATEGORICAL_INPUTS = ["CODE_GENDER", "FLAG_OWN_CAR"]
+# Default reduced inputs (fallback when correlation-based selection is unavailable).
+DEFAULT_REDUCED_INPUT_FEATURES = [
     "SK_ID_CURR",
     "EXT_SOURCE_2",
     "EXT_SOURCE_3",
@@ -102,6 +108,9 @@ class PreprocessorArtifacts:
     required_input_columns: list[str]
     numeric_required_columns: list[str]
     correlated_imputation: dict[str, dict[str, float | str]]
+    reduced_input_columns: list[str] = field(default_factory=list)
+    feature_selection_method: str = "default"
+    feature_selection_scores: dict[str, float] = field(default_factory=dict)
 
 
 app = FastAPI(title="Credit Scoring API", version="0.1.0")
@@ -234,6 +243,11 @@ def build_preprocessor(data_path: Path) -> PreprocessorArtifacts:
     for col, max_val in outlier_maxes.items():
         df = df[df[col] != max_val]
 
+    reduced_input_columns, selection_scores, selection_method = _compute_reduced_inputs(
+        df,
+        input_feature_columns=input_feature_columns,
+    )
+
     numeric_ranges = {}
     for col in numeric_cols:
         if col in df.columns:
@@ -249,7 +263,9 @@ def build_preprocessor(data_path: Path) -> PreprocessorArtifacts:
     required_raw.update(col for col in columns_must_not_missing if col in input_feature_columns)
     required_raw.add("SK_ID_CURR")
     if USE_REDUCED_INPUTS:
-        required_input = sorted({col for col in REDUCED_INPUT_FEATURES if col in input_feature_columns})
+        required_input = reduced_input_columns
+        if not required_input:
+            required_input = _fallback_reduced_inputs(input_feature_columns)
     else:
         required_input = sorted(required_raw)
     numeric_required = sorted(col for col in required_input if col in numeric_medians)
@@ -275,6 +291,9 @@ def build_preprocessor(data_path: Path) -> PreprocessorArtifacts:
         required_input_columns=required_input,
         numeric_required_columns=numeric_required,
         correlated_imputation=correlated_imputation,
+        reduced_input_columns=reduced_input_columns,
+        feature_selection_method=selection_method,
+        feature_selection_scores=selection_scores,
     )
 
 
@@ -340,7 +359,7 @@ def build_fallback_preprocessor() -> PreprocessorArtifacts:
     required_raw = set(ENGINEERED_SOURCES)
     required_raw.update(col for col in columns_must_not_missing if col in input_feature_columns)
     required_raw.add("SK_ID_CURR")
-    required_input = sorted({col for col in REDUCED_INPUT_FEATURES if col in input_feature_columns})
+    required_input = _fallback_reduced_inputs(input_feature_columns)
     numeric_required = sorted(col for col in required_input if col in numeric_medians)
 
     numeric_ranges = {col: (float(df[col].min()), float(df[col].max())) for col in numeric_cols}
@@ -360,6 +379,9 @@ def build_fallback_preprocessor() -> PreprocessorArtifacts:
         required_input_columns=required_input,
         numeric_required_columns=numeric_required,
         correlated_imputation={},
+        reduced_input_columns=required_input,
+        feature_selection_method="fallback",
+        feature_selection_scores={},
     )
 
 
@@ -368,6 +390,20 @@ def load_preprocessor(data_path: Path, artifacts_path: Path) -> PreprocessorArti
         preprocessor = joblib.load(artifacts_path)
         updated = False
         required_updated = False
+        if not hasattr(preprocessor, "reduced_input_columns") or not preprocessor.reduced_input_columns:
+            reduced_cols, selection_scores, selection_method = _compute_reduced_inputs_from_data(
+                data_path, preprocessor
+            )
+            preprocessor.reduced_input_columns = reduced_cols
+            preprocessor.feature_selection_method = selection_method
+            preprocessor.feature_selection_scores = selection_scores
+            updated = True
+        if not hasattr(preprocessor, "feature_selection_method"):
+            preprocessor.feature_selection_method = "default"
+            updated = True
+        if not hasattr(preprocessor, "feature_selection_scores"):
+            preprocessor.feature_selection_scores = {}
+            updated = True
         if not hasattr(preprocessor, "required_input_columns"):
             if USE_REDUCED_INPUTS:
                 required_input = _reduce_input_columns(preprocessor)
@@ -445,6 +481,90 @@ def _infer_numeric_ranges_from_scaler(preprocessor: PreprocessorArtifacts) -> di
     return ranges
 
 
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        output.append(value)
+    return output
+
+
+def _fallback_reduced_inputs(input_feature_columns: list[str]) -> list[str]:
+    cols = [
+        col
+        for col in DEFAULT_REDUCED_INPUT_FEATURES
+        if col in input_feature_columns or col == "SK_ID_CURR"
+    ]
+    if "SK_ID_CURR" not in cols:
+        cols.insert(0, "SK_ID_CURR")
+    return _dedupe_preserve_order(cols)
+
+
+def _select_reduced_inputs_by_correlation(
+    df: pd.DataFrame,
+    *,
+    input_feature_columns: list[str],
+    top_n: int,
+    min_corr: float,
+) -> tuple[list[str], dict[str, float]]:
+    if "TARGET" not in df.columns:
+        return [], {}
+    df_corr = df
+    if CORRELATION_SAMPLE_SIZE > 0 and len(df_corr) > CORRELATION_SAMPLE_SIZE:
+        df_corr = df_corr.sample(CORRELATION_SAMPLE_SIZE, random_state=42)
+    numeric_cols = [
+        col
+        for col in df_corr.select_dtypes(include=["number"]).columns
+        if col in input_feature_columns
+        and col not in {"TARGET", "SK_ID_CURR", "is_train", "is_test"}
+    ]
+    if not numeric_cols:
+        return [], {}
+    corr = df_corr[numeric_cols + ["TARGET"]].corr()["TARGET"].drop("TARGET")
+    corr = corr.dropna()
+    if corr.empty:
+        return [], {}
+    corr = corr.reindex(corr.abs().sort_values(ascending=False).index)
+    if min_corr > 0:
+        corr = corr[corr.abs() >= min_corr]
+    selected_numeric = list(corr.index[:top_n])
+    scores = {col: float(abs(corr.loc[col])) for col in selected_numeric}
+    selected = ["SK_ID_CURR"]
+    selected.extend(selected_numeric)
+    selected.extend(
+        col
+        for col in FEATURE_SELECTION_CATEGORICAL_INPUTS
+        if col in input_feature_columns
+    )
+    selected = [
+        col for col in selected if col in input_feature_columns or col == "SK_ID_CURR"
+    ]
+    return _dedupe_preserve_order(selected), scores
+
+
+def _compute_reduced_inputs(
+    df: pd.DataFrame | None,
+    *,
+    input_feature_columns: list[str],
+) -> tuple[list[str], dict[str, float], str]:
+    if FEATURE_SELECTION_METHOD != "correlation":
+        return _fallback_reduced_inputs(input_feature_columns), {}, "default"
+    if df is None or "TARGET" not in df.columns:
+        return _fallback_reduced_inputs(input_feature_columns), {}, "default"
+    reduced_cols, scores = _select_reduced_inputs_by_correlation(
+        df,
+        input_feature_columns=input_feature_columns,
+        top_n=FEATURE_SELECTION_TOP_N,
+        min_corr=FEATURE_SELECTION_MIN_CORR,
+    )
+    if not reduced_cols:
+        return _fallback_reduced_inputs(input_feature_columns), {}, "default"
+    return reduced_cols, scores, "correlation"
+
+
 def _build_correlated_imputation(
     df: pd.DataFrame,
     *,
@@ -496,10 +616,49 @@ def _build_correlated_imputation(
 
 
 def _reduce_input_columns(preprocessor: PreprocessorArtifacts) -> list[str]:
-    cols = [col for col in REDUCED_INPUT_FEATURES if col in preprocessor.input_feature_columns or col == "SK_ID_CURR"]
+    cols = getattr(preprocessor, "reduced_input_columns", None) or []
+    if not cols:
+        cols = _fallback_reduced_inputs(preprocessor.input_feature_columns)
+    cols = [
+        col
+        for col in cols
+        if col in preprocessor.input_feature_columns or col == "SK_ID_CURR"
+    ]
     if "SK_ID_CURR" not in cols:
-        cols.append("SK_ID_CURR")
-    return sorted(set(cols))
+        cols.insert(0, "SK_ID_CURR")
+    return _dedupe_preserve_order(cols)
+
+
+def _compute_reduced_inputs_from_data(
+    data_path: Path,
+    preprocessor: PreprocessorArtifacts,
+) -> tuple[list[str], dict[str, float], str]:
+    if not data_path.exists():
+        return _fallback_reduced_inputs(preprocessor.input_feature_columns), {}, "default"
+    df = pd.read_parquet(data_path)
+    df = new_features_creation(df)
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    if preprocessor.columns_keep:
+        df = df[preprocessor.columns_keep]
+    if preprocessor.columns_must_not_missing:
+        df = df.dropna(subset=preprocessor.columns_must_not_missing)
+
+    numeric_cols = df.select_dtypes(include=["number"]).columns
+    df[numeric_cols] = df[numeric_cols].fillna(pd.Series(preprocessor.numeric_medians))
+
+    for col in preprocessor.categorical_columns:
+        if col in df.columns:
+            df[col] = df[col].fillna("Unknown")
+
+    if "CODE_GENDER" in df.columns:
+        df = df[df["CODE_GENDER"] != "XNA"]
+
+    for col, max_val in preprocessor.outlier_maxes.items():
+        if col in df.columns:
+            df = df[df[col] != max_val]
+
+    return _compute_reduced_inputs(df, input_feature_columns=preprocessor.input_feature_columns)
 
 
 def _compute_correlated_imputation(
@@ -716,10 +875,20 @@ def features(include_all: bool = Query(default=False)) -> dict[str, Any]:
     preprocessor: PreprocessorArtifacts = app.state.preprocessor
     optional_features = [col for col in preprocessor.input_feature_columns if col not in preprocessor.required_input_columns]
     correlated = sorted(getattr(preprocessor, "correlated_imputation", {}) or {})
+    scores = getattr(preprocessor, "feature_selection_scores", {}) or {}
+    selection_scores = {
+        col: round(scores[col], 4)
+        for col in preprocessor.required_input_columns
+        if col in scores
+    }
     payload = {
         "required_input_features": preprocessor.required_input_columns,
         "engineered_features": ENGINEERED_FEATURES,
         "model_features_count": len(preprocessor.features_to_scaled),
+        "feature_selection_method": preprocessor.feature_selection_method,
+        "feature_selection_top_n": FEATURE_SELECTION_TOP_N,
+        "feature_selection_min_corr": FEATURE_SELECTION_MIN_CORR,
+        "feature_selection_scores": selection_scores,
         "correlation_threshold": CORRELATION_THRESHOLD,
         "correlated_imputation_count": len(correlated),
         "correlated_imputation_features": correlated[:50],
@@ -732,6 +901,37 @@ def features(include_all: bool = Query(default=False)) -> dict[str, Any]:
         payload["optional_input_features"] = []
         payload["optional_input_features_count"] = len(optional_features)
     return payload
+
+
+@app.get("/logs")
+def logs(
+    tail: int = Query(default=200, ge=1, le=2000),
+    x_logs_token: str | None = Header(default=None, alias="X-Logs-Token"),
+    authorization: str | None = Header(default=None),
+) -> Response:
+    if not LOGS_ACCESS_TOKEN:
+        raise HTTPException(status_code=503, detail={"message": "Logs access token not configured."})
+
+    token = x_logs_token
+    if token is None and authorization:
+        prefix = "bearer "
+        if authorization.lower().startswith(prefix):
+            token = authorization[len(prefix):].strip() or None
+
+    if token != LOGS_ACCESS_TOKEN:
+        raise HTTPException(status_code=403, detail={"message": "Invalid logs access token."})
+
+    if not LOG_PREDICTIONS:
+        raise HTTPException(status_code=404, detail={"message": "Prediction logging is disabled."})
+
+    log_path = LOG_DIR / LOG_FILE
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail={"message": "Log file not found."})
+
+    with log_path.open("r", encoding="utf-8") as handle:
+        lines = deque(handle, maxlen=tail)
+
+    return Response(content="".join(lines), media_type="application/x-ndjson")
 
 
 @app.post("/predict")

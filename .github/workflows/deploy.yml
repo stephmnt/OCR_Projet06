@@ -25,7 +25,10 @@ jobs:
           poetry install --no-interaction --no-ansi
 
       - name: Run tests
-        run: poetry run pytest -q
+        run: poetry run pytest --cov=app --cov=monitoring --cov-report=term-missing -q
+
+      - name: Build Docker image
+        run: docker build -t ocr-projet06:ci .
 
       - name: Deploy to Hugging Face Space
         if: github.ref == 'refs/heads/main'
@@ -34,7 +37,7 @@ jobs:
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
-          git clone https://huggingface.co/spaces/stephmnt/ocr_projet06 hf_space
+          git clone https://huggingface.co/spaces/stephmnt/credit-scoring-mlops hf_space
           rsync -av \
             --exclude '.git' \
             --exclude '.venv' \
@@ -51,4 +54,4 @@ jobs:
           cd hf_space
           git add .
           git commit -m "Auto-deploy from GitHub Actions" || echo "No changes to commit"
-          git push https://stephmnt:${HF_TOKEN}@huggingface.co/spaces/stephmnt/ocr_projet06 main
+          git push https://stephmnt:${HF_TOKEN}@huggingface.co/spaces/stephmnt/credit-scoring-mlops main

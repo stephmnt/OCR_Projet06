@@ -57,8 +57,9 @@ def test_features(client):
     payload = resp.json()
     assert "input_features" in payload
     assert "required_input_features" in payload
+    assert "feature_selection_method" in payload
     assert "SK_ID_CURR" in payload["input_features"]
-    assert "EXT_SOURCE_2" in payload["input_features"]
+    assert len(payload["input_features"]) >= 2
 
 
 def test_predict(client):

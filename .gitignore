@@ -16,6 +16,9 @@ artifacts/*
 mlruns/
 .DS_Store
 *.code-workspace
+docs/
+presentation_projet08.pptx
+rapport_projet06.md
 
 ## https://github.com/github/gitignore/blob/e8554d85bf62e38d6db966a50d2064ac025fd82a/Python.gitignore
 

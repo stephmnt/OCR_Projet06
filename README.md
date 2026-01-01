@@ -10,9 +10,9 @@ pinned: false
 
 # OCR Projet 06 – Crédit
 
-[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/stephmnt/OCR_Projet06/deploy.yml)](https://github.com/stephmnt/OCR_Projet05/actions/workflows/deploy.yml)
-[![GitHub Release Date](https://img.shields.io/github/release-date/stephmnt/OCR_Projet06?display_date=published_at&style=flat-square)](https://github.com/stephmnt/OCR_Projet06/releases)
-[![project_license](https://img.shields.io/github/license/stephmnt/OCR_projet06.svg)](https://github.com/stephmnt/OCR_Projet06/blob/main/LICENSE)
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/stephmnt/credit-scoring-mlops/deploy.yml)](https://github.com/stephmnt/credit-scoring-mlops/actions/workflows/deploy.yml)
+[![GitHub Release Date](https://img.shields.io/github/release-date/stephmnt/credit-scoring-mlops?display_date=published_at&style=flat-square)](https://github.com/stephmnt/credit-scoring-mlops/releases)
+[![project_license](https://img.shields.io/github/license/stephmnt/credit-scoring-mlops.svg)](https://github.com/stephmnt/credit-scoring-mlops/blob/main/LICENSE)
 
 ## Lancer MLFlow
 
@@ -41,12 +41,9 @@ mlflow models serve -m "models:/credit_scoring_model/Staging" -p 5001 --no-conda
 
 ## API FastAPI
 
-L'API attend un payload JSON avec une cle `data`. La valeur peut etre un objet
-unique (un client) ou une liste d'objets (plusieurs clients). La liste des
-features requises (jeu reduit) est disponible via l'endpoint `/features`. Les
-autres champs sont optionnels et seront completes par des valeurs par defaut.
+L'API attend un payload JSON avec une cle `data`. La valeur peut etre un objet unique (un client) ou une liste d'objets (plusieurs clients). La liste des features requises (jeu reduit) est disponible via l'endpoint `/features`. Les autres champs sont optionnels et seront completes par des valeurs par defaut.
 
-Inputs minimums (10 + `SK_ID_CURR`) :
+Inputs minimums (10 + `SK_ID_CURR`) derives d'une selection par correlation (voir `/features`) :
 
 - `EXT_SOURCE_2`
 - `EXT_SOURCE_3`
@@ -58,6 +55,12 @@ Inputs minimums (10 + `SK_ID_CURR`) :
 - `AMT_GOODS_PRICE`
 - `DAYS_BIRTH`
 - `FLAG_OWN_CAR`
+
+Parametres utiles (selection des features) :
+
+- `FEATURE_SELECTION_METHOD` (defaut: `correlation`)
+- `FEATURE_SELECTION_TOP_N` (defaut: `8`)
+- `FEATURE_SELECTION_MIN_CORR` (defaut: `0.02`)
 
 ### Environnement Poetry (recommande)
 
@@ -134,7 +137,7 @@ uvicorn app.main:app --reload --port 7860
 Verifier le service (HF) :
 
 ```shell
-BASE_URL="https://stephmnt-ocr_projet06.hf.space"
+BASE_URL="https://stephmnt-credit-scoring-mlops.hf.space"
 curl -s "${BASE_URL}/health"
 ```
 
@@ -225,6 +228,7 @@ Variables utiles :
 - `LOG_PREDICTIONS=1` active l'ecriture des logs (defaut: 1)
 - `LOG_DIR=logs`
 - `LOG_FILE=predictions.jsonl`
+- `LOGS_ACCESS_TOKEN` pour proteger l'endpoint `/logs`
 - `LOG_HASH_SK_ID=1` pour anonymiser `SK_ID_CURR`
 
 Exemple local :
@@ -233,7 +237,21 @@ Exemple local :
 LOG_PREDICTIONS=1 LOG_DIR=logs uvicorn app.main:app --reload --port 7860
 ```
 
-Apres quelques requetes, generer le rapport de drift :
+Recuperer les logs (HF) :
+
+Configurer `LOGS_ACCESS_TOKEN` dans les secrets du Space, puis :
+
+```shell
+curl -s -H "X-Logs-Token: $LOGS_ACCESS_TOKEN" "${BASE_URL}/logs?tail=200"
+```
+
+Alternative :
+
+```shell
+curl -s -H "Authorization: Bearer $LOGS_ACCESS_TOKEN" "${BASE_URL}/logs?tail=200"
+```
+
+Apres quelques requêtes, gélérer le rapport de drift :
 
 ```shell
 python monitoring/drift_report.py \
@@ -242,9 +260,17 @@ python monitoring/drift_report.py \
   --output-dir reports
 ```
 
-Le rapport HTML est genere dans `reports/drift_report.html` (avec des plots dans
-`reports/plots/`). Sur Hugging Face, le disque est ephemere : telecharge les logs
+Le rapport HTML est généré dans `reports/drift_report.html` (avec des plots dans
+`reports/plots/`). Sur Hugging Face, le disque est éphemère : télécharger les logs
 avant d'analyser.
+
+Le rapport inclut aussi la distribution des scores predits et le taux de prediction
+(option `--score-bins` pour ajuster le nombre de bins).
+
+Captures (snapshot local du reporting + stockage):
+
+- Rapport: `docs/monitoring/drift_report.html` + `docs/monitoring/plots/`
+- Stockage des logs: `docs/monitoring/logs_storage.png`
 
 ## Contenu de la release
 
@@ -255,19 +281,28 @@ avant d'analyser.
 - **Validation croisee + tuning** : `StratifiedKFold`, `GridSearchCV` et Hyperopt sont utilises.
 - **Score metier + seuil optimal** : le `custom_score` est la metrique principale des tableaux de comparaison et de la CV, avec un `best_threshold` calcule.
 - **Explicabilite** : feature importance, SHAP et LIME sont inclus.
-- **MLOps (MLflow)** : tracking des params / metriques (dont `custom_score` et `best_threshold`), tags,
-  registry et passage en "Staging".
+- **Selection de features par correlation** : top‑N numeriques + un petit set categoriel, expose via `/features`.
+- **Monitoring & drift** : rapport HTML avec KS/PSI + distribution des scores predits et taux de prediction
+  (snapshots dans `docs/monitoring/`).
+- **CI/CD** : tests avec couverture (`pytest-cov`), build Docker et deploy vers Hugging Face Spaces.
 
-![Screenshot MLFlow](https://raw.githubusercontent.com/stephmnt/OCR_Projet06/main/screen-mlflow.png)
+![Screenshot MLFlow](https://raw.githubusercontent.com/stephmnt/credit-scoring-mlops/main/screen-mlflow.png)
 
-## Réduction des features
+### Manques prioritaires
 
-Réduction des features : l’API utilise un top‑10 SHAP, alors que la mission insiste sur une réduction à l’aide d’une matrice de corrélation. La corrélation est bien documentée dans le notebook d’exploration, mais la liste utilisée par l’API n’est pas explicitement issue de cette matrice. À clarifier dans la doc ou aligner la sélection sur la corrélation.
+* Mission 2 Étape 4 non couverte: pas de profiling/optimisation post‑déploiement ni rapport de gains, à livrer avec une version optimisée.
 
-## Glossaire rapide
+### Preuves / doc à compléter
 
-- **custom_score** : metrique metier qui penalise plus fortement les faux negatifs que les faux positifs.
-- **Seuil optimal** : probabilite qui sert a transformer un score en classe 0/1.
-- **Validation croisee (CV)** : evaluation sur plusieurs sous-echantillons pour eviter un resultat "chanceux".
-- **MLflow tracking** : historique des runs, parametres et metriques.
-- **Registry** : espace MLflow pour versionner et promouvoir un modele (ex. "Staging").
+* Lien explicite vers le dépôt public + stratégie de versions/branches à ajouter dans README.md.
+* Preuve de model registry/serving MLflow à conserver (capture UI registry ou commande de serving) en plus de screen-mlflow.png.
+* Dataset de référence non versionné (data_final.parquet est ignoré), documenter l’obtention pour exécuter drift_report.py.
+* Badge GitHub Actions pointe vers OCR_Projet05 dans README.md, corriger l’URL.
+* RGPD/PII: LOG_HASH_SK_ID est désactivé par défaut dans main.py, préciser l’activation en prod dans README.md.
+
+### Améliorations recommandées
+
+* Compléter les tests API: /logs (auth OK/KO), batch predict, param threshold, SK_ID_CURR manquant, outliers dans test_api.py.
+* Simplifier le fallback ALLOW_MISSING_ARTIFACTS et DummyModel si les artefacts sont versionnés (nettoyer main.py et conftest.py).
+* Unifier la gestion des dépendances (Poetry vs requirements.txt) et aligner pyproject.toml / requirements.txt.
+* Si l’évaluateur attend une stratégie de branches, créer une branche feature et fusionner pour preuve.

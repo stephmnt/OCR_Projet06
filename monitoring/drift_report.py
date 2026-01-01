@@ -1,3 +1,5 @@
+# construire drift avec evidently
+
 from __future__ import annotations
 
 import argparse
@@ -10,6 +12,8 @@ import pandas as pd
 from scipy import stats
 
 try:
+    import matplotlib
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 except ImportError as exc:  # pragma: no cover - optional plotting dependency
     raise SystemExit(
@@ -99,12 +103,37 @@ def _plot_categorical(ref: pd.Series, prod: pd.Series, output_path: Path, max_ca
     plt.close()
 
 
+def _plot_score_distribution(scores: pd.Series, output_path: Path, bins: int = 30) -> None:
+    plt.figure(figsize=(6, 4))
+    plt.hist(scores.dropna(), bins=bins, range=(0, 1), alpha=0.8, color="#4C78A8")
+    plt.title("Prediction score distribution")
+    plt.xlabel("Predicted probability")
+    plt.ylabel("Count")
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
+def _plot_prediction_rate(predictions: pd.Series, output_path: Path) -> None:
+    counts = predictions.value_counts(normalize=True, dropna=False).sort_index()
+    plt.figure(figsize=(4, 4))
+    plt.bar(counts.index.astype(str), counts.values, color="#F58518")
+    plt.title("Prediction rate")
+    plt.xlabel("Predicted class")
+    plt.ylabel("Share")
+    plt.ylim(0, 1)
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
 def generate_report(
     log_path: Path,
     reference_path: Path,
     output_dir: Path,
     sample_size: int,
     psi_threshold: float,
+    score_bins: int,
 ) -> Path:
     inputs_df, meta_df = _load_logs(log_path)
     if inputs_df.empty:
@@ -171,6 +200,45 @@ def generate_report(
     latency_p50 = float(latency_ms.quantile(0.5)) if not latency_ms.empty else 0.0
     latency_p95 = float(latency_ms.quantile(0.95)) if not latency_ms.empty else 0.0
 
+    valid_meta = meta_df
+    if "status_code" in meta_df.columns:
+        valid_meta = meta_df[meta_df["status_code"] < 400]
+    score_series = (
+        pd.to_numeric(valid_meta.get("probability", pd.Series(dtype=float)), errors="coerce")
+        .dropna()
+    )
+    pred_series = (
+        pd.to_numeric(valid_meta.get("prediction", pd.Series(dtype=float)), errors="coerce")
+        .dropna()
+    )
+
+    score_metrics_html = "<li>No prediction scores available.</li>"
+    score_plots_html = ""
+    if not score_series.empty:
+        score_mean = float(score_series.mean())
+        score_p50 = float(score_series.quantile(0.5))
+        score_p95 = float(score_series.quantile(0.95))
+        score_min = float(score_series.min())
+        score_max = float(score_series.max())
+        score_metrics = [
+            f"<li>Score mean: {score_mean:.4f}</li>",
+            f"<li>Score p50: {score_p50:.4f}</li>",
+            f"<li>Score p95: {score_p95:.4f}</li>",
+            f"<li>Score min: {score_min:.4f}</li>",
+            f"<li>Score max: {score_max:.4f}</li>",
+        ]
+        score_metrics_html = "\n".join(score_metrics)
+        score_plot_path = plots_dir / "score_distribution.png"
+        _plot_score_distribution(score_series, score_plot_path, bins=score_bins)
+        score_plots_html = "<img src='plots/score_distribution.png' />"
+
+    if not pred_series.empty:
+        pred_rate = float(pred_series.mean())
+        score_metrics_html += f"\n<li>Predicted default rate: {pred_rate:.2%}</li>"
+        pred_plot_path = plots_dir / "prediction_rate.png"
+        _plot_prediction_rate(pred_series, pred_plot_path)
+        score_plots_html += "\n<img src='plots/prediction_rate.png' />"
+
     summary_html = summary_df.to_html(index=False, escape=False)
     plots_html = "\n".join(
         f"<h4>{row['feature']}</h4><img src='plots/{_safe_name(row['feature'])}.png' />"
@@ -198,6 +266,11 @@ def generate_report(
       <li>Latency p50: {latency_p50:.2f} ms</li>
       <li>Latency p95: {latency_p95:.2f} ms</li>
     </ul>
+    <h2>Score Monitoring</h2>
+    <ul>
+      {score_metrics_html}
+    </ul>
+    {score_plots_html}
     <h2>Data Drift Summary</h2>
     {summary_html}
     <h2>Feature Distributions</h2>
@@ -217,6 +290,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("reports"))
     parser.add_argument("--sample-size", type=int, default=50000)
     parser.add_argument("--psi-threshold", type=float, default=0.2)
+    parser.add_argument("--score-bins", type=int, default=30)
     args = parser.parse_args()
 
     report_path = generate_report(
@@ -225,6 +299,7 @@ def main() -> None:
         output_dir=args.output_dir,
         sample_size=args.sample_size,
         psi_threshold=args.psi_threshold,
+        score_bins=args.score_bins,
     )
     print(f"Drift report saved to {report_path}")
 
